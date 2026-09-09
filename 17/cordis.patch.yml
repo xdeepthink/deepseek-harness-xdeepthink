@@ -1,0 +1,4 @@
+# cordis.patch.yml
+plugins:
+  '@deepseek-ai/dsh-agent-loop': disable
+  './my-loop': enable
