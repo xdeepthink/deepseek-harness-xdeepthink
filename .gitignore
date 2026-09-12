@@ -12,3 +12,6 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+
+# Demo 运行产物
+22/recording.json
