@@ -1,0 +1,12 @@
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+
+# 禁用默认的 fs-sandbox（Windows 上默认的 fs 执行器）
+- id: fs-sandbox
+  disabled: true
+
+# 插入自定义 memory-fs 插件
+- insert:
+    - id: memory-fs
+      name: './memory-fs.ts'
