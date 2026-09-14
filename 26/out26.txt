@@ -1,0 +1,28 @@
+=== sandbox：进程隔离与操作系统级安全沙箱（真实实现）===
+
+--- 1. LocalSandboxProvider：plugin 装配 + open 平台探测（真实）---
+  → ctx.sandbox 就绪（open 缺失）
+  → open 成功：当前平台沙箱可用（真实隔离就绪）
+
+--- 2. sandboxPolicy：默认模式 + 会话 override（真实）---
+  → 默认模式 = danger-full-access（装配配置决定）
+  → resolve(session) → mode=danger-full-access（无 override 时回落到默认）
+  → setSandboxMode(read-only) 后 → mode=read-only（会话级 override 真实生效）
+
+--- 3. 沙箱策略决策表（demo=true，策略语义对应真实模式）---
+  → 写 .demo-26-workspace/build.txt → 允许（ok）
+  → 读 ~/.ssh/id_rsa → 拒绝（denied path ~/.ssh/id_rsa）
+  → 读 /etc/passwd → 拒绝（denied path /etc/passwd）
+  → 外连 registry.npmjs.org → 允许（ok）
+  → 外连 evil.example.com → 拒绝（domain not allowed evil.example.com）
+  → 起 6 个子进程 → 拒绝（process limit 4）
+  → 决策语义与真实模式对应：read-only 下写拒绝、网络按 allowedDomains、进程/内存上限（demo）
+
+--- 4. 边界与迁移 ---
+  → 真实机制：ctx.sandbox（provider）+ ctx.sandboxPolicy（模式）；隔离由 OS 完成（bwrap/Landlock/Seatbelt）
+  → 当前平台（Windows 无可用 OS 沙箱）：provider open 失败 → SANDBOX_UNAVAILABLE → 应用层 fail-closed
+  → 迁移到 Linux：同一套 provider/policy 接口，open 成功即真实隔离（第55篇同款语义）
+
+=== 实验完成 ===
+
+C:\Users\QHG\Desktop\deepseekharness\code>
