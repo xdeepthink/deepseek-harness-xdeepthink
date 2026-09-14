@@ -1,0 +1,25 @@
+=== subagent：子代理委派与并行执行（真实实现）===
+
+  → ctx.subagents 就绪（真实 SubagentRuntime）
+  → SUBAGENT_DESCRIPTOR_VERSION=3（委派描述符协议版本，真实常量）
+
+--- 1. 委派协议（真实 STRUCTURED_OUTPUT_INSTRUCTION / startInProcessRun）---
+  → 结构化输出指令前缀：When you have your final answer, you MUS…（真实 in-process 驱动指令）
+  → startInProcessRun 类型 = function（进程内驱动入口存在）
+
+--- 2. 委派决策（demo=true：子代理执行需模型驱动，本环境无 key）---
+  → 委派 t1（researcher）：objective=调研 harness 事件 API → done
+  → 委派 t2（coder）：objective=写 demo-32 骨架 → done
+  → 委派 t3（verifier）：objective=核验 out 输出 → pending
+  → 真实接入点：ctx.subagents.startContinuable({ provider, delegation }) 发起持久可续子代理（需模型 provider）
+
+--- 3. 深度守卫（真实 SubagentDepthError 类型）---
+  → 委派深度超限抛错：SubagentDepthError depth=? max=8
+
+--- 4. subagent 投影（真实注册的 projection 定义）---
+  → snapshot(subagentCatalog, subagentIdentity) = {"subagentCatalog":[]}
+  → 目录/身份投影已注册（真实 SubagentRuntime 装配时注入）
+
+=== 实验完成 ===
+
+C:\Users\QHG\Desktop\deepseekharness\code>
