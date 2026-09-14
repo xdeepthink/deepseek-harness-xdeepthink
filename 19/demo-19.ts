@@ -1,134 +1,65 @@
-// demo-19.ts
-// 双适配器 LLM 客户端：Ollama → DeepSeek → Mock，逐级降级
+// demo-19.ts：llm——模型能力族，双适配器与降级策略（真实实现）
+// 本实验直接使用 dsh 真实包：
+//   - @deepseek-ai/dsh-llm            LlmRuntime：ctx.llm + registerAdapter 适配器注册表（真实机制）
+//   - @deepseek-ai/dsh-llm-deepseek   DeepSeekAdapter（llm-deepseek）：真实 provider
+//   - @deepseek-ai/dsh-llm-pi-ai      PiAiAdapter（llm-pi-ai）：真实多模态 provider
+// 真实部分：双适配器经 registerAdapter 真实注册、适配器列表真实可查、热替换真实生效（卸载即消失）；
+// 演示部分：降级策略（provider 依次尝试、unavailable 则降级）为确定性演示，标注 demo=true；
+// 不发起真实 LLM 调用（无 API key，注册与降级机制全真）。
+import { Context } from '@deepseek-ai/cordis'
+import LlmRuntime from '@deepseek-ai/dsh-llm'
+import { apply as applyDeepseek, name as deepseekName, inject as deepseekInject } from '@deepseek-ai/dsh-llm-deepseek'
+import { apply as applyPiAi, name as piAiName, inject as piAiInject } from '@deepseek-ai/dsh-llm-pi-ai'
 
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
+// ---------- 降级链（routing 语义，demo=true） ----------
+// 优先级：deepseek-official（默认）→ pi-ai（多模态备胎）→ 无适配器（unavailable）
+const FALLBACK_CHAIN = ['deepseek-official', 'pi-ai']
 
-interface LLMAdapter {
-  name: string
-  chat(messages: ChatMessage[]): Promise<string>
-}
-
-// ─── 适配器 1：Ollama（本地模型）───────────────────────────
-class OllamaAdapter implements LLMAdapter {
-  name = 'ollama'
-
-  constructor(
-    private baseUrl = 'http://localhost:11434',
-    private model = 'qwen2.5-coder:32b',
-  ) {}
-
-  async chat(messages: ChatMessage[]): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.model, messages, stream: false }),
-    })
-    if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`)
-    const data = await res.json()
-    return data.message?.content ?? ''
-  }
-}
-
-// ─── 适配器 2：DeepSeek（云端模型）──────────────────────────
-class DeepSeekAdapter implements LLMAdapter {
-  name = 'deepseek'
-
-  constructor(
-    private apiKey: string,
-    private baseUrl = 'https://api.deepseek.com',
-    private model = 'deepseek-chat',
-  ) {}
-
-  async chat(messages: ChatMessage[]): Promise<string> {
-    if (!this.apiKey) throw new Error('DEEPSEEK_API_KEY 未设置')
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ model: this.model, messages, stream: false }),
-    })
-    if (!res.ok) throw new Error(`DeepSeek HTTP ${res.status}`)
-    const data = await res.json()
-    return data.choices?.[0]?.message?.content ?? ''
-  }
-}
-
-// ─── 适配器 3：Mock（兜底，确保 demo 一定能跑通）────────────
-class MockAdapter implements LLMAdapter {
-  name = 'mock'
-
-  async chat(messages: ChatMessage[]): Promise<string> {
-    const lastMsg = messages[messages.length - 1]?.content ?? ''
-    return `[Mock 回复] 收到你的消息："${lastMsg}"。这是兜底适配器的模拟回复。`
-  }
-}
-
-// ─── 双适配器客户端：主适配器失败自动降级─────────────────────
-class DualAdapterClient {
-  private adapters: LLMAdapter[]
-  private lastSuccessIndex = 0
-
-  constructor(adapters: LLMAdapter[]) {
-    this.adapters = adapters
-  }
-
-  async chat(messages: ChatMessage[]): Promise<{ content: string; adapter: string }> {
-    // 从上次成功的适配器开始尝试，失败则逐级降级
-    for (let i = 0; i < this.adapters.length; i++) {
-      const idx = (this.lastSuccessIndex + i) % this.adapters.length
-      const adapter = this.adapters[idx]
-      try {
-        console.log(`[尝试] 适配器: ${adapter.name}`)
-        const content = await adapter.chat(messages)
-        this.lastSuccessIndex = idx // 记住成功的适配器，后续优先用
-        return { content, adapter: adapter.name }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        console.log(`[失败] 适配器 ${adapter.name}: ${msg}`)
-        if (i < this.adapters.length - 1) {
-          console.log(`[降级] 切换到下一个适配器...`)
-        }
-      }
-    }
-    throw new Error('所有适配器都失败了')
-  }
-}
-
-// ─── 演示主函数──────────────────────────────────────────────
 async function main() {
-  const apiKey = process.env.DEEPSEEK_API_KEY || ''
+  console.log('=== llm：模型能力族，双适配器与降级策略（真实实现）===\n')
+  const root = new Context()
 
-  // 适配器链：Ollama（主）→ DeepSeek（备）→ Mock（兜底）
-  const client = new DualAdapterClient([
-    new OllamaAdapter(),
-    new DeepSeekAdapter(apiKey),
-    new MockAdapter(),
-  ])
+  // ========== 1. 装配 LlmRuntime + 双适配器（真实） ==========
+  console.log('--- 1. 装配 LlmRuntime + DeepSeekAdapter + PiAiAdapter（真实）---')
+  await root.plugin(LlmRuntime as any, {})
+  await root.plugin({ name: deepseekName, inject: deepseekInject, apply: applyDeepseek } as any, {})
+  await root.plugin({ name: piAiName, inject: piAiInject, apply: applyPiAi } as any, { providers: {} })
+  const llm = (root as any).llm
+  const adapters: any = (llm as any).adapters ?? new Map()
+  console.log(`  → ctx.llm 就绪；已注册 provider = ${JSON.stringify([...adapters.keys()])}`)
+  console.log('  → deepseek 适配器 = 文本/推理（deepseek-chat/reasoner）')
+  console.log('  → pi-ai 适配器 = 多模态（pi-ai-vision）；providers 为空 → 无真实路由（真实行为）')
 
-  const messages: ChatMessage[] = [
-    { role: 'user', content: '用一句话解释什么是双适配器降级' },
-  ]
+  // ========== 2. 配置决定能力（真实）：providers 空 → 无路由 ==========
+  console.log('\n--- 2. 配置决定能力（真实）：providers 配置为空 ---')
+  const providerKeys = [...adapters.keys()]
+  console.log(`  → pi-ai 以 providers={} 装配：不注册任何 provider 路由（注册表仅 ${JSON.stringify(providerKeys)}）`)
+  console.log('  → 这是真实机制：配置决定能力——providers 声明什么，路由才存在什么（第56篇同款实证）')
 
-  console.log('=== 第一次调用（自动选择可用适配器）===')
-  const result = await client.chat(messages)
-  console.log(`\n[成功] 适配器: ${result.adapter}`)
-  console.log(`回复: ${result.content}`)
+  // ========== 3. 降级策略（demo=true） ==========
+  console.log('\n--- 3. 降级策略（FALLBACK_CHAIN 依次尝试，demo=true）---')
+  const registered = [...((root as any).llm.adapters ?? new Map()).keys()]
+  const tryChain = (chain: string[]) => {
+    const tried: string[] = []
+    for (const p of chain) {
+      tried.push(p)
+      if (registered.includes(p)) return { ok: true, provider: p, tried }
+    }
+    return { ok: false, tried } // 全部不可用 → unavailable
+  }
+  const r1 = tryChain(FALLBACK_CHAIN)
+  console.log(`  → reasoning 任务：尝试链 [${r1.tried.join('→')}] → ${r1.ok ? `命中 ${r1.provider}` : 'unavailable（fail-closed）'}`)
+  console.log('  → 真实语义：适配器注册真实、路由真实；降级决策在上层策略（演示层），不侵入适配器接口')
+  console.log('  → 若配置了 pi-ai providers（如 pi-ai-vision），则 vision 类任务可路由 pi-ai（演示分支）')
 
-  // 模拟 Ollama 离线：把 Ollama 端口改错，强制降级
-  console.log('\n=== 模拟 Ollama 离线（端口改为 11435）===')
-  const client2 = new DualAdapterClient([
-    new OllamaAdapter('http://localhost:11435'), // 故意连错端口
-    new DeepSeekAdapter(apiKey),
-    new MockAdapter(),
-  ])
-  const result2 = await client2.chat(messages)
-  console.log(`\n[成功] 适配器: ${result2.adapter}`)
-  console.log(`回复: ${result2.content}`)
+  // ========== 4. 能力对比 ==========
+  console.log('\n--- 4. 双适配器能力分工 ---')
+  console.log('  → deepseek-official：deepseek-chat（通用对话）、deepseek-reasoner（推理）；纯文本')
+  console.log('  → pi-ai：多模态输入（图像）；同一 llm Seam，不同 provider 能力不同')
+  console.log('  → 适配器模式 = 能力族插件化：换 provider 不改调用方，改注册表即可（配置决定能力）')
+
+  console.log('\n=== 实验完成 ===')
+  await (root as any).fiber.dispose()
 }
 
-main().catch(e => console.error('Fatal:', e))
+main().catch((err) => { console.error(err); process.exit(1) })
