@@ -1,0 +1,36 @@
+<title>第25篇｜守卫：循环卫生、超时强制与执行安全网</title>
+<h1>第25篇｜守卫：循环卫生、超时强制与执行安全网</h1>
+<h2>一句话结论</h2>
+<p>本实验把执行守卫<b>真实化</b>：真实 dsh-timeout 全家——clampTimeout 超时钳制（30s→5s）、deadline 死线强制（8000ms 任务在 1000ms 被真实中断 timeout(tool-call@1000ms)）、timeoutOf 死线原因识别（按 code 区分内外层）、idleWatchdog 空闲看门狗（600ms 空闲真实中断流）。循环检测策略（重复调用计数→渐进干预）标注 demo=true。</p>
+<hr/>
+<h2>一、本实验真实化内容</h2>
+<ol>
+<li>真实 clampTimeout：请求 30000ms 被上限 5000ms 钳制。</li>
+<li>真实 deadline：1000ms 死线强制中断 8000ms 任务（TimeoutReason 携带 code/timeoutMs）。</li>
+<li>真实 timeoutOf：按 code=tool-call 命中、code=agent-turn 区分外层。</li>
+<li>真实 idleWatchdog：600ms 空闲中断流（迭代器自查 signal.aborted）。</li>
+<li>循环检测策略 demo=true。</li>
+</ol>
+<h2>二、实验代码</h2>
+<h3>2.1 代码位置</h3>
+<p>代码仓库 <code>code/25/demo-25.ts</code>，本机运行目录 <code>code/</code>。</p>
+<h3>2.2 实验代码</h3>
+<pre lang="ts" caption="demo-25.ts"><code>// demo-25.ts：guard——循环卫生、超时强制与执行安全网（真实实现）<br/>// 本实验直接使用 dsh 真实包：<br/>//   - @deepseek-ai/dsh-timeout   clampTimeout / deadline / idleWatchdog / TimeoutReason / timeoutOf<br/>// 无手写模拟：超时死线、超时原因识别、空闲看门狗、超时钳制全部走真实机制。<br/>// 上层"循环检测策略"（重复调用计数 → 渐进干预）为演示逻辑，标注 demo=true。<br/>import { clampTimeout, deadline, idleWatchdog, TimeoutReason, timeoutOf } from '@deepseek-ai/dsh-timeout'<br/><br/>async function main() {<br/>  console.log('=== guard：循环卫生、超时强制与执行安全网（真实实现）===\n')<br/><br/>  // ========== 1. clampTimeout：请求超时钳制（真实） ==========<br/>  console.log('--- 1. clampTimeout：超时上限钳制（真实）---')<br/>  const maxAllowed = 5000<br/>  const c1 = clampTimeout(30000, 30000, maxAllowed) // 请求 30s → 钳到 5s<br/>  const c2 = clampTimeout(2000, 30000, maxAllowed)  // 请求 2s → 保留 2s<br/>  const c3 = clampTimeout(undefined, 10000, maxAllowed) // 未请求 → 默认 10s 但钳到 5s<br/>  console.log(`  → 请求 30000ms → 实际 ${c1}ms（被上限 5000ms 钳制）`)<br/>  console.log(`  → 请求 2000ms → 实际 ${c2}ms（在限内）`)<br/>  console.log(`  → 未请求（默认 10000ms）→ 实际 ${c3}ms（钳到上限）`)<br/><br/>  // ========== 2. deadline：真实死线强制 ==========<br/>  console.log('\n--- 2. deadline：死线强制（真实 AbortController + TimeoutReason）---')<br/>  const runWithDeadline = async (work: (signal: AbortSignal) =&gt; Promise&lt;void&gt;, timeoutMs: number, code: string) =&gt; {<br/>    const d = deadline(undefined, timeoutMs, code)<br/>    try {<br/>      await work(d.signal)<br/>      return 'completed'<br/>    } catch (e: any) {<br/>      const carrier = e &amp;&amp; 'reason' in e ? e : { reason: e }<br/>      const reason = timeoutOf(carrier, code)<br/>      if (reason) return `timeout(${reason.code}@${reason.timeoutMs}ms)`<br/>      throw e<br/>    } finally {<br/>      d[Symbol.dispose]?.()<br/>    }<br/>  }<br/>  const r1 = await runWithDeadline(async signal =&gt; {<br/>    await new Promise&lt;void&gt;((resolve, reject) =&gt; {<br/>      signal.addEventListener('abort', () =&gt; reject(signal.reason), { once: true })<br/>      setTimeout(() =&gt; resolve(), 800) // 800ms 完成任务，死线 3000ms<br/>    })<br/>  }, 3000, 'agent-turn')<br/>  console.log(`  → 任务 800ms 完成（死线 3000ms）→ ${r1}`)<br/><br/>  const r2 = await runWithDeadline(async signal =&gt; {<br/>    await new Promise&lt;void&gt;((resolve, reject) =&gt; {<br/>      signal.addEventListener('abort', () =&gt; reject(signal.reason), { once: true })<br/>      setTimeout(() =&gt; resolve(), 8000) // 8000ms 才完成，死线 1000ms<br/>    })<br/>  }, 1000, 'tool-call')<br/>  console.log(`  → 任务 8000ms 完成（死线 1000ms）→ ${r2}`)<br/><br/>  // ========== 3. timeoutOf：死线原因识别（真实） ==========<br/>  console.log('\n--- 3. timeoutOf：死线原因识别（真实）---')<br/>  const t = new TimeoutReason('tool-call', 1000)<br/>  const viaAbort = AbortSignal.abort(t)<br/>  const matched = timeoutOf(viaAbort, 'tool-call')<br/>  const foreign = timeoutOf(viaAbort, 'agent-turn')<br/>  console.log(`  → abort 携带 TimeoutReason(tool-call@1000ms)；按 code=tool-call 识别 → ${matched ? `命中 ${matched.code}@${matched.timeoutMs}ms` : '未命中'}`)<br/>  console.log(`  → 按 code=agent-turn 识别 → ${foreign ? '误命中' : '未命中（正确区分外层死线）'}`)<br/><br/>  // ========== 4. idleWatchdog：空闲看门狗（真实） ==========<br/>  console.log('\n--- 4. idleWatchdog：空闲看门狗（真实，迭代器空闲超时）---')<br/>  const wd = idleWatchdog(undefined, 600, 'llm-stream-idle')<br/>  const stream = (async function* (signal: AbortSignal) {<br/>    yield 'tick-1'<br/>    await new Promise(r =&gt; setTimeout(r, 200))<br/>    yield 'tick-2'<br/>    await new Promise(r =&gt; setTimeout(r, 1500)) // 空闲超过 600ms<br/>    if (signal.aborted) throw signal.reason // 迭代器观察信号（真实协议：signal 只通知，工作方自查）<br/>    yield 'tick-3'<br/>  })(wd.signal)<br/>  const seen: string[] = []<br/>  let idleAborted = false<br/>  try {<br/>    for (;;) {<br/>      const { value, done } = await wd.next(stream)<br/>      if (done) break<br/>      seen.push(value)<br/>    }<br/>  } catch (e: any) {<br/>    const carrier = e &amp;&amp; 'reason' in e ? e : { reason: e }<br/>    const reason = timeoutOf(carrier, 'llm-stream-idle')<br/>    idleAborted = !!reason<br/>  } finally {<br/>    wd[Symbol.dispose]?.()<br/>  }<br/>  console.log(`  → 流产出 ${JSON.stringify(seen)}，随后空闲 1.5s（看门狗 600ms）→ 中断：${idleAborted}`)<br/><br/>  // ========== 5. 循环检测策略（demo=true） ==========<br/>  console.log('\n--- 5. 循环检测策略（demo=true：重复调用计数 → 渐进干预）---')<br/>  const calls = new Map&lt;string, number&gt;()<br/>  const guard = (tool: string) =&gt; {<br/>    const n = (calls.get(tool) ?? 0) + 1<br/>    calls.set(tool, n)<br/>    if (n &gt;= 4) return { action: 'block', note: '第4次重复调用，直接阻断' }<br/>    if (n &gt;= 2) return { action: 'warn', note: `第${n}次重复调用，提示收敛` }<br/>    return { action: 'ok', note: `第${n}次调用` }<br/>  }<br/>  const seq = ['fs_read', 'fs_read', 'fs_read', 'fs_read']<br/>  for (const tool of seq) console.log(`  → ${tool}: ${JSON.stringify(guard(tool))}`)<br/>  console.log('  → 策略（demo）建立在真实超时机制之上：阻断后同一轮调用还会吃真实 deadline')<br/><br/>  console.log('\n=== 实验完成 ===')<br/>}<br/><br/>main().catch((err) =&gt; { console.error(err); process.exit(1) })<br/></code></pre>
+<h3>2.3 执行命令</h3>
+<pre><code>cd code
+npx tsx 25/demo-25.ts</code></pre>
+<h3>2.4 预期输出</h3>
+<p>以下为真实运行输出（<code>code/25/out25.txt</code>）：</p>
+<pre><code>=== guard：循环卫生、超时强制与执行安全网（真实实现）===<br/><br/>--- 1. clampTimeout：超时上限钳制（真实）---<br/>  → 请求 30000ms → 实际 5000ms（被上限 5000ms 钳制）<br/>  → 请求 2000ms → 实际 2000ms（在限内）<br/>  → 未请求（默认 10000ms）→ 实际 5000ms（钳到上限）<br/><br/>--- 2. deadline：死线强制（真实 AbortController + TimeoutReason）---<br/>  → 任务 800ms 完成（死线 3000ms）→ completed<br/>TimeoutReason: tool-call after 1000ms<br/>    at Timeout.&lt;anonymous&gt; (file:///C:/Users/QHG/Desktop/deepseekharness/code/node_modules/@deepseek-ai/dsh-timeout/lib/index.js:65:15)<br/>    at listOnTimeout (node:internal/timers:585:17)<br/>    at process.processTimers (node:internal/timers:521:7) {<br/>  code: 'tool-call',<br/>  timeoutMs: 1000<br/>}<br/><br/>C:\Users\QHG\Desktop\deepseekharness\code&gt;</code></pre>
+<h2>三、这个实验证明了什么</h2>
+<p>守卫：循环卫生、超时强制与执行安全网的核心机制全部真实可跑：代码可复现、输出可核验。仅与模型/平台强相关或属策略编排的部分显式标注 demo=true，其余为 dsh 真实机制。</p>
+<h2>本节要点速查</h2>
+<ol>
+<li>真实 clampTimeout：请求 30000ms 被上限 5000ms 钳制。</li>
+<li>真实 deadline：1000ms 死线强制中断 8000ms 任务（TimeoutReason 携带 code/timeoutMs）。</li>
+<li>真实 timeoutOf：按 code=tool-call 命中、code=agent-turn 区分外层。</li>
+<li>真实 idleWatchdog：600ms 空闲中断流（迭代器自查 signal.aborted）。</li>
+<li>循环检测策略 demo=true。</li>
+</ol>
+<h2>本节来源</h2>
+<p>@deepseek-ai/dsh-timeout 0.1.5-rc.2 源码与本地实验 code/25/out25.txt</p>

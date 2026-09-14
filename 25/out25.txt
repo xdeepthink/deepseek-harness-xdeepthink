@@ -1,0 +1,18 @@
+=== guard：循环卫生、超时强制与执行安全网（真实实现）===
+
+--- 1. clampTimeout：超时上限钳制（真实）---
+  → 请求 30000ms → 实际 5000ms（被上限 5000ms 钳制）
+  → 请求 2000ms → 实际 2000ms（在限内）
+  → 未请求（默认 10000ms）→ 实际 5000ms（钳到上限）
+
+--- 2. deadline：死线强制（真实 AbortController + TimeoutReason）---
+  → 任务 800ms 完成（死线 3000ms）→ completed
+TimeoutReason: tool-call after 1000ms
+    at Timeout.<anonymous> (file:///C:/Users/QHG/Desktop/deepseekharness/code/node_modules/@deepseek-ai/dsh-timeout/lib/index.js:65:15)
+    at listOnTimeout (node:internal/timers:585:17)
+    at process.processTimers (node:internal/timers:521:7) {
+  code: 'tool-call',
+  timeoutMs: 1000
+}
+
+C:\Users\QHG\Desktop\deepseekharness\code>
