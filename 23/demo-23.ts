@@ -1,120 +1,79 @@
-// demo-23.ts（演示：进程管理、资源限制与生命周期记录）
-// subprocess 不是独立 Seam——它是 shell 内部的服务，通过 ctx.subprocess.spawn() 调用
-// 这个 Demo 演示进程管理的核心概念：进程启动、资源限制、生命周期记录、进程数量限制
-// 为了跨平台兼容，这里用 Node.js 内部模拟进程，不依赖外部 sleep 命令
+// demo-23.ts：subprocess——进程管理与资源控制（真实实现）
+// 本实验直接使用 dsh 真实包：
+//   - @deepseek-ai/dsh-subprocess-local   LocalSubprocessRuntime：ctx.subprocess（真实进程 spawn、
+//                                          进程树管理、waitForExit、超时清理）
+// 无手写模拟：进程启动、生命周期、超时终止全部走真实机制。
+// 资源限制策略（最大并发数）为上层演示逻辑，标注 demo=true。
+import { Context } from '@deepseek-ai/cordis'
+import SubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import PwshLocalExecutor from '@deepseek-ai/dsh-pwsh-local'
+import { randomUUID } from 'node:crypto'
 
-import * as fs from 'fs'
+const BASH = 'C:\\Program Files\\Git\\bin\\bash.exe'
 
-interface ProcessHandle {
-  id: string
-  status: 'running' | 'exited' | 'killed'
-  exitCode?: number
-  startedAt: number
-  endedAt?: number
-  timer?: NodeJS.Timeout
-  runMs: number
-}
-
-class ProcessManager {
-  private handles = new Map<string, ProcessHandle>()
-  private lifecycleLog: Array<{ time: string; event: string; processId?: string; details?: string }> = []
-  private maxProcesses: number
-  private maxRuntime: number
-
-  constructor(options: { maxProcesses?: number; maxRuntimeMs?: number } = {}) {
-    this.maxProcesses = options.maxProcesses ?? 5
-    this.maxRuntime = options.maxRuntimeMs ?? 10000 // 10 秒
-  }
-
-  private log(event: string, processId?: string, details?: string) {
-    this.lifecycleLog.push({
-      time: new Date().toISOString(),
-      event,
-      processId,
-      details,
-    })
-    console.log(`[ProcessManager] ${event} ${processId ?? ''} ${details ?? ''}`)
-  }
-
-  async spawn(name: string, runMs: number): Promise<ProcessHandle> {
-    // 进程数量限制
-    const runningCount = [...this.handles.values()].filter(h => h.status === 'running').length
-    if (runningCount >= this.maxProcesses) {
-      this.log('spawn_rejected', undefined, `超过最大进程数 ${this.maxProcesses}`)
-      throw new Error(`Too many running processes (max ${this.maxProcesses})`)
-    }
-
-    const id = `proc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-
-    const handle: ProcessHandle = {
-      id,
-      status: 'running',
-      startedAt: Date.now(),
-      runMs,
-    }
-
-    // 进程模拟：用 setTimeout 模拟进程运行
-    const timer = setTimeout(() => {
-      handle.status = 'exited'
-      handle.exitCode = 0
-      handle.endedAt = Date.now()
-      this.log('exit', id, `code=0 (模拟进程运行了 ${runMs}ms)`)
-    }, runMs)
-
-    handle.timer = timer
-
-    this.handles.set(id, handle)
-    this.log('spawn', id, `${name} (运行 ${runMs}ms)`)
-
-    return handle
-  }
-
-  kill(id: string) {
-    const handle = this.handles.get(id)
-    if (handle && handle.status === 'running') {
-      clearTimeout(handle.timer)
-      handle.status = 'killed'
-      handle.endedAt = Date.now()
-      this.log('kill', id, 'signal=SIGTERM')
-    }
-  }
-
-  list(): ProcessHandle[] {
-    return [...this.handles.values()]
-  }
-
-  saveLog(path: string) {
-    fs.writeFileSync(path, JSON.stringify(this.lifecycleLog, null, 2))
-    console.log(`[ProcessManager] 生命周期日志已保存到 ${path}（${this.lifecycleLog.length} 个事件）`)
-  }
-}
-
-// 演示主流程
 async function main() {
-  const manager = new ProcessManager({ maxProcesses: 3, maxRuntimeMs: 5000 })
+  console.log('=== subprocess：进程管理与资源控制（真实实现）===\n')
+  const root = new Context()
+  await root.plugin(SubprocessRuntime as any)
+  await root.plugin(PwshLocalExecutor as any)
+  const sub = (root as any).subprocess
+  console.log(`  → ctx.subprocess 就绪（真实运行时）`)
+  const lifecycle: string[] = []
 
-  console.log('=== 启动 3 个模拟进程 ===')
-  await manager.spawn('task-a', 2000)
-  await manager.spawn('task-b', 3000)
-  await manager.spawn('task-c', 4000)
-
-  console.log('\n=== 尝试启动第 4 个（应该被拒绝）===')
-  try {
-    await manager.spawn('task-d', 1000)
-  } catch (e) {
-    console.log(`预期的拒绝: ${(e as Error).message}`)
+  const spawnAndWatch = (argv: string[], label: string, timeoutMs = 15000) => {
+    const h = sub.spawn({ argv, cwd: process.cwd(), timeoutMs, graceMs: 3000, stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' } })
+    let out = ''
+    h.stdout.on('data', (c: Buffer) => { out += c.toString() })
+    h.stderr.on('data', (c: Buffer) => { out += c.toString() })
+    h.done.then((r: any) => lifecycle.push(`${label}:exit(${r?.exitCode ?? '?'})`), () => lifecycle.push(`${label}:error`))
+    return { h, out: () => out }
   }
 
-  console.log('\n=== 等待进程退出 ===')
-  await new Promise(resolve => setTimeout(resolve, 2500))
+  // ========== 1. 三个真实进程并行启动 ==========
+  console.log('--- 1. 真实进程并行启动（同一运行时）---')
+  const p1 = spawnAndWatch([BASH, '-c', 'sleep 1; echo P1-done'], 'p1')
+  const p2 = spawnAndWatch([BASH, '-c', 'sleep 2; echo P2-done'], 'p2')
+  const p3 = spawnAndWatch([BASH, '-c', 'sleep 3; echo P3-done'], 'p3')
+  console.log('  → 已 spawn p1（1s）、p2（2s）、p3（3s）三个真实 bash 进程')
 
-  console.log('\n=== 当前进程状态 ===')
-  manager.list().forEach(h => {
-    console.log(`  ${h.id}: ${h.status} (运行了 ${h.runMs}ms)`)
-  })
+  // ========== 2. 生命周期：按完成顺序记录（真实 waitForExit） ==========
+  console.log('\n--- 2. 生命周期记录（真实完成顺序）---')
+  await Promise.all([p1.h.waitForExit(), p2.h.waitForExit(), p3.h.waitForExit()])
+  console.log(`  → 完成顺序：${lifecycle.filter(l => l.startsWith('p')).join(' | ')}`)
+  console.log(`  → p1 输出: ${p1.out().trim().split('\n').pop()}`)
+  console.log(`  → p3 输出: ${p3.out().trim().split('\n').pop()}`)
 
-  console.log('\n=== 保存生命周期日志 ===')
-  manager.saveLog('./lifecycle.json')
+  // ========== 3. 超时终止（真实 timeoutMs 机制） ==========
+  console.log('\n--- 3. 超时终止（真实 timeoutMs：进程被强制清理）---')
+  const t0 = Date.now()
+  const slow = spawnAndWatch([BASH, '-c', 'sleep 30; echo never'], 'slow', 3000)
+  await Promise.race([slow.h.waitForExit(), new Promise(r => setTimeout(r, 9000))])
+  const elapsed = Date.now() - t0
+  const stillRunning = (slow.h as any).running?.() ?? false
+  console.log(`  → sleep 30 进程：timeoutMs=3000 触发真实超时清理，${elapsed}ms 内被终止（running=${stillRunning}）`)
+
+  // ========== 4. 资源上限（demo=true：进程计数策略） ==========
+  console.log('\n--- 4. 资源上限策略（demo=true：最多同时 2 个）---')
+  const running = new Set<string>()
+  const spawnJob = async (label: string) => {
+    const h = sub.spawn({ argv: [BASH, '-c', 'sleep 1'], cwd: process.cwd(), timeoutMs: 10000, graceMs: 3000, stdio: { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' } })
+    await h.waitForExit()
+    running.delete(label)
+  }
+  const trySpawn = (label: string) => {
+    if (running.size >= 2) { console.log(`  → ${label}: 拒绝（已有 ${running.size} 个在跑，达上限）`); return }
+    running.add(label)
+    console.log(`  → ${label}: 允许（当前在跑 ${running.size}）`)
+    void spawnJob(label)
+  }
+  trySpawn('job-a')
+  trySpawn('job-b')
+  trySpawn('job-c')
+  await new Promise(r => setTimeout(r, 2500))
+  console.log(`  → 策略结果：job-a/job-b 同时放行，job-c 因并发上限被拒（真实进程并行执行中）`)
+
+  console.log('\n=== 实验完成 ===')
+  await (root as any).fiber.dispose()
 }
 
-main().catch(console.error)
+main().catch((err) => { console.error(err); process.exit(1) })
