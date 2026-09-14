@@ -1,4 +1,4 @@
-// demo-30.ts：goal——长期目标持久化与跨会话目标追踪（真实实现）
+<h3>11.3 实验目标</h3><p>直接使用 dsh 真实包验证 goal 核心能力：真实 GoalService（ctx.goals）全状态机（create/edit/pause/resume/complete）、goal/change 事件审计留痕、goal 投影跨会话可追踪、活跃目标重复创建被拒（GOAL_ALREADY_EXISTS 真实约束）。</p><h3>11.4 实现代码</h3><pre lang="ts" caption="demo-30.ts"><code>// demo-30.ts：goal——长期目标持久化与跨会话目标追踪（真实实现）
 // 本实验直接使用 dsh 真实包：
 //   - @deepseek-ai/dsh-goal     GoalService：ctx.goals（create/edit/pause/resume/complete 真实状态机）
 //   - @deepseek-ai/dsh-session + dsh-session-projection + dsh-agent  底座（live agent 注册、投影）
@@ -52,7 +52,7 @@ async function main() {
   console.log('\n--- 5. goal 投影（sessionProjections，跨会话可追踪）---')
   const proj = (root as any).sessionProjections.snapshot(session, ['goal'])
   console.log(`  → 投影 values.goal = ${JSON.stringify(proj.values.goal).slice(0, 200)}`)
-  const evt = session.snapshotEvents().filter((e: any) => e.type === 'goal/change')
+  const evt = session.snapshotEvents().filter((e: any) =&gt; e.type === 'goal/change')
   console.log(`  → goal/change 事件帧 ${evt.length} 条（审计留痕：谁在何时改了目标）`)
 
   // ========== 6. 重复创建被拒（真实约束） ==========
@@ -70,4 +70,35 @@ async function main() {
   await (root as any).fiber.dispose()
 }
 
-main().catch((err) => { console.error(err); process.exit(1) })
+main().catch((err) =&gt; { console.error(err); process.exit(1) })</code></pre><h3>11.5 预期输出</h3><p><b>执行命令：</b></p><pre lang="bash"><code>cd code
+npx tsx 30/demo-30.ts</code></pre><p><b>预期输出</b>（本机真实运行输出，见 code/30/out30.txt）：</p><pre lang="bash"><code>=== goal：长期目标持久化与跨会话目标追踪（真实实现）===
+
+  → ctx.goals 就绪（真实 GoalService）
+
+--- 1. 创建目标（create，真实状态机：phase=active + armed）---
+  → id=goal-64f00b8b-0080-4cdb-b2bc-b4ae84e67651
+  → phase=active, revision=1, maxGoalRounds=10
+  → activation=armed
+
+--- 2. 编辑目标（edit，revision 递增）---
+  → objective=完成 DeepSeek Harness 60 篇系列并全部真实化
+  → revision=2（+1）
+
+--- 3. 暂停 / 恢复（pause → phase=paused；resume → phase=active+armed）---
+  → pause 后 phase=paused, activation=disarmed
+  → resume 后 phase=active, activation=armed
+
+--- 4. 完成（complete → phase=complete + disarmed）---
+  → complete 后 phase=complete, activation=disarmed
+
+--- 5. goal 投影（sessionProjections，跨会话可追踪）---
+  → 投影 values.goal = {"goal":{"id":"goal-64f00b8b-0080-4cdb-b2bc-b4ae84e67651","revision":5,"objective":"完成 DeepSeek Harness 60 篇系列并全部真实化","phase":"complete","maxGoalRounds":10},"roundsStarted":0,"createdAt":1789373614169
+  → goal/change 事件帧 5 条（审计留痕：谁在何时改了目标）
+
+--- 6. 已完成目标可替换；活跃目标重复创建被拒（真实约束）---
+  → 替换完成目标：新 id=goal-dce4abcb-9363-4ff8-8c09-89e4e94c7e62（允许）
+  → 重复创建被拒：goal "goal-dce4abcb-9363-4ff8-8c09-89e4e94c7e62" already exists with phase "acti（GOAL_ALREADY_EXISTS 真实机制）
+
+=== 实验完成 ===
+
+C:\Users\QHG\Desktop\deepseekharness\code&gt;</code></pre><h3>11.6 这个实验证明了什么</h3><ol><li>真实 GoalService 状态机：create→edit→pause→resume→complete 全生命周期 phase/activation 流转真实可跑。</li><li>goal/change 事件审计：5 条事件帧真实留痕，谁在何时改了目标可追溯。</li><li>goal 投影跨会话可追踪：sessionProjections 读取目标状态，跨会话可见。</li><li>真实约束：活跃目标重复创建被 GOAL_ALREADY_EXISTS 拒绝，已完成目标可替换。</li></ol>

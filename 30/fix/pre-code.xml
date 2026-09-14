@@ -1,4 +1,4 @@
-// demo-30.ts：goal——长期目标持久化与跨会话目标追踪（真实实现）
+<pre lang="ts" caption="demo-30.ts"><code>// demo-30.ts：goal——长期目标持久化与跨会话目标追踪（真实实现）
 // 本实验直接使用 dsh 真实包：
 //   - @deepseek-ai/dsh-goal     GoalService：ctx.goals（create/edit/pause/resume/complete 真实状态机）
 //   - @deepseek-ai/dsh-session + dsh-session-projection + dsh-agent  底座（live agent 注册、投影）
@@ -52,7 +52,7 @@ async function main() {
   console.log('\n--- 5. goal 投影（sessionProjections，跨会话可追踪）---')
   const proj = (root as any).sessionProjections.snapshot(session, ['goal'])
   console.log(`  → 投影 values.goal = ${JSON.stringify(proj.values.goal).slice(0, 200)}`)
-  const evt = session.snapshotEvents().filter((e: any) => e.type === 'goal/change')
+  const evt = session.snapshotEvents().filter((e: any) =&gt; e.type === 'goal/change')
   console.log(`  → goal/change 事件帧 ${evt.length} 条（审计留痕：谁在何时改了目标）`)
 
   // ========== 6. 重复创建被拒（真实约束） ==========
@@ -70,4 +70,4 @@ async function main() {
   await (root as any).fiber.dispose()
 }
 
-main().catch((err) => { console.error(err); process.exit(1) })
+main().catch((err) =&gt; { console.error(err); process.exit(1) })</code></pre>

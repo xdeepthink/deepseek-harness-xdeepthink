@@ -1,0 +1,1 @@
+<p>直接使用 dsh 真实包验证 goal 核心能力：真实 GoalService（ctx.goals）全状态机（create/edit/pause/resume/complete）、goal/change 事件审计留痕、goal 投影跨会话可追踪、活跃目标重复创建被拒（GOAL_ALREADY_EXISTS 真实约束）。</p>

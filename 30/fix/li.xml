@@ -1,0 +1,1 @@
+<li>真实 GoalService 状态机：create→edit→pause→resume→complete 全生命周期 phase/activation 流转真实可跑。</li><li>goal/change 事件审计：5 条事件帧真实留痕，谁在何时改了目标可追溯。</li><li>goal 投影跨会话可追踪：sessionProjections 读取目标状态，跨会话可见。</li><li>真实约束：活跃目标重复创建被 GOAL_ALREADY_EXISTS 拒绝，已完成目标可替换。</li>
