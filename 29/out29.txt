@@ -1,0 +1,24 @@
+=== workflow：工作流编排（真实实现）===
+
+  → ctx.workflowEngine 就绪（真实 WorkflowEngine）
+
+--- 1. 工作流生命周期事件（真实 emitWorkflowEvent）---
+  → start:wf-17893 | end:wf-17893（真实事件分发，runId=wf-1789373916467）
+
+--- 2. WorkerThreadWorkflowEngine（真实 worker 引擎物化）---
+  → materializeFromRealm 物化成功：hello=realm-value（跨 realm 边界物化协议真实）
+
+--- 3. DAG 编排（demo=true：并行/依赖语义演示）---
+  → 步骤 a 执行：A: 读配置（依赖 无）
+  → 步骤 b 执行：B: 解析文档（依赖 a）
+  → 步骤 c 执行：C: 建索引（依赖 a）
+  → 步骤 d 执行：D: 汇总输出（依赖 b+c）
+  → DAG 完成顺序：a → b/c 并行 → d（真实引擎按依赖拓扑调度；此处为演示）
+
+--- 4. 边界 ---
+  → 真实路径：ctx.workflowEngine 由 WorkerThreadWorkflowEngine 在 worker 线程中执行步骤（隔离 + 超时）
+  → 本环境：引擎物化与事件机制为真实；DAG 步骤执行以演示承载（标注 demo=true）
+
+=== 实验完成 ===
+
+C:\Users\QHG\Desktop\deepseekharness\code>
